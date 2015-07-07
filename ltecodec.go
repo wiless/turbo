@@ -37,7 +37,7 @@ type LTECodec struct {
 
 	// var tr_output vlib.MatrixF
 	//tr_output [][]int
-	tr_output []int
+	tr_output []uint8
 }
 
 func (l *LTECodec) Init(mod string, coderate string, blocklength int) {
@@ -51,25 +51,26 @@ func (l *LTECodec) Init(mod string, coderate string, blocklength int) {
 	//l.tr_output = [][]int{{0, 1}, {0, 1}, {1, 0}, {1, 0}, {1, 0}, {1, 0}, {0, 1}, {0, 1}}
 
 	l.tr_nextstate = []int{0, 4, 5, 1, 2, 6, 7, 3, 4, 0, 1, 5, 6, 2, 3, 7}
-	l.tr_output = []int{0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1}
+	l.tr_output = []uint8{0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1}
 	// l.tr_output = []int{0, 0, 1, 0}, {1, 0}, {1, 0}, {1, 0}, {0, 1}, {0, 1}}
 	l.ILEAVE_SEQ = InterleaverLTE(blocklength)
 
 	// l.ctc_ileave_indices(blocklength)
 }
 
-func (l LTECodec) encoder(ipdata []int) []int {
+func (l LTECodec) encoder(ipdata vlib.VectorB) vlib.VectorB {
 	// var tailbits vlib.VectorB
 	var next_state, nobits int
 	// var bit int
 
 	nobits = len(ipdata)
+	indexes := ipdata.Scale(8) /// Multiplies by 8
 
-	paritybits := make([]int, nobits+6)
+	paritybits := make([]uint8, nobits+6)
 	next_state = 0
 	for i := 0; i < nobits; i++ {
-
-		indx := ipdata[i]*8 + next_state
+		indx := indexes[i] + next_state
+		// indx := ipdata[i]*8 + next_state
 		next_state = l.tr_nextstate[indx]
 		paritybits[i] = l.tr_output[indx]
 
@@ -83,7 +84,7 @@ func (l LTECodec) encoder(ipdata []int) []int {
 
 	k := nobits
 	for i := nobits; i < nobits+3; i++ {
-		paritybits[k], paritybits[k+1] = int(tailstate[1]^tailstate[2]), tailstate[0]^tailstate[2]
+		paritybits[k], paritybits[k+1] = uint8(tailstate[1]^tailstate[2]), uint8(tailstate[0]^tailstate[2])
 
 		k += 2
 		tailstate[2] = tailstate[1]
@@ -94,23 +95,24 @@ func (l LTECodec) encoder(ipdata []int) []int {
 	return paritybits
 }
 
-func (l *LTECodec) Encode(ipbits []int) []int {
+func (l *LTECodec) Encode(bits vlib.VectorB) vlib.VectorB {
 
-	var LEN int = len(ipbits)
-	ileaveipbits := make([]int, LEN)
-	for i := 0; i < LEN; i++ {
-		ileaveipbits[i] = ipbits[l.ILEAVE_SEQ[i]]
-	}
-	var parity1 []int
-	parity1 = l.encoder(ipbits)
+	var LEN int = len(bits)
+	ileaveipbits := vlib.NewVectorB(LEN)
+	ileaveipbits = bits.At(l.ILEAVE_SEQ)
+	// for i := 0; i < LEN; i++ {
+	// 	ileaveipbits[i] = ipbits[l.ILEAVE_SEQ[i]]
+	// }
+	var parity1 vlib.VectorB
+	parity1 = l.encoder(bits)
 	parity2 := l.encoder(ileaveipbits)
 
 	n := 3*LEN + 12
-	codedbits := make([]int, n)
-	for bit := 0; bit < LEN; bit++ {
-		codedbits[3*bit] = ipbits[bit]
-		codedbits[3*bit+1] = parity1[bit]
-		codedbits[3*bit+2] = parity2[bit]
+	codedbits := vlib.NewVectorB(n)
+	for i := 0; i < LEN; i++ {
+		codedbits[3*i] = bits[i]
+		codedbits[3*i+1] = parity1[i]
+		codedbits[3*i+2] = parity2[i]
 	}
 
 	TAILS := 6
@@ -357,7 +359,7 @@ func (l *LTECodec) lambda_calc(alpha *matrix.DenseMatrix, beta *matrix.DenseMatr
 	}
 }
 
-func (l *LTECodec) Decode(softval []float64) (decodedbits []int) {
+func (l *LTECodec) Decode(softval []float64) (decodedbits vlib.VectorB) {
 	TRE_LENGTH := l.BLOCKLENGTH + 4
 	la := matrix.Zeros(TRE_LENGTH, 8)
 	lb := matrix.Zeros(TRE_LENGTH, 8)
@@ -370,7 +372,7 @@ func (l *LTECodec) Decode(softval []float64) (decodedbits []int) {
 	leo2 := matrix.Zeros(TRE_LENGTH, 2)
 	var sub float64
 	sysl, lg1, sysil, lg2 := l.demuxsoftval(softval)
-	decintbits := make([]int, l.BLOCKLENGTH)
+	decintbits := vlib.NewVectorB(l.BLOCKLENGTH)
 	//fmt.Printf("\nSys1 = %v", sysl)
 	//fmt.Printf("\nSys2 = %v ", sysil)
 	//fmt.Printf("\nlg1 = %v", lg1)
@@ -403,7 +405,8 @@ func (l *LTECodec) Decode(softval []float64) (decodedbits []int) {
 		}
 	}
 	//fmt.Print(decintbits)
-	decodedbits = make([]int, l.BLOCKLENGTH)
+	decodedbits.Resize(l.BLOCKLENGTH)
+	// decodedbits = decintbits.At(l.ILEAVE_SEQ)
 	for i := 0; i < l.BLOCKLENGTH; i++ {
 		decodedbits[l.ILEAVE_SEQ[i]] = decintbits[i]
 	}

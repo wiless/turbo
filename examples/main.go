@@ -1,13 +1,15 @@
 package main
 
 import (
-	"../"
 	"fmt"
 	"math/rand"
 	"runtime"
 	"time"
 
+
 	//"github.com/wiless/turbo"
+	"github.com/wiless/gocomm/modem"
+	"../"
 	"github.com/wiless/vlib"
 )
 
@@ -52,7 +54,7 @@ func bpskawgndemod(recsym []float64, variance float64) (llr []float64) {
 func main() {
 	seedvalue := time.Now().Unix()
 	rand.Seed(seedvalue)
-	CORES := 1
+	CORES := 4
 	runtime.GOMAXPROCS(16)
 	BLOCKLENGTH := 6144
 	NOBLOCKS := 500
@@ -73,23 +75,29 @@ func main() {
 			// _ = symbol
 			var codec turbo.LTECodec
 			codec.Init("BPSK", "_13_", BLOCKLENGTH)
-
+			bpsk := modem.NewModem(1)
 			for i := 0; i < NOBLOCKS/CORES; i++ {
-				input := vlib.Randsrc(BLOCKLENGTH, 2)
+
+				bits := vlib.RandB(BLOCKLENGTH)
+				output := codec.Encode(bits)
+				symbs := vlib.VectorC(bpsk.ModulateBits(output))
+
 				// fmt.Printf("\rCORE %d %c   :  BLOCK  : %d", c, symbol[c%4], i)
 				// input := vlib.Randsrc(BLOCKLENGTH, 2)
+				// mod := bpskmod(output)
 
-				output := codec.Encode(input)
-				mod := bpskmod(output)
-				llr := bpskawgndemod(mod, variance)
-				dec_output := codec.Decode(llr)
+				llr := bpskawgndemod(symbs.Real(), variance)
+				// fmt.Println("Leng of soft bits", len(llr))
+				output = codec.Decode(llr)
 				//fmt.Print("Input bits = %v", input)
 				//fmt.Print("\nOuput bits = %v", dec_output)
 
-				for j := 0; j < codec.BLOCKLENGTH; j++ {
-					berc = berc + input[j] ^ dec_output[j]
+				bits.ErrorCount(output)
 
-				}
+				// for j := 0; j < codec.BLOCKLENGTH; j++ {
+				// 	berc = berc + (input[j] != dec_output[j])
+
+				// }
 
 			}
 			fmt.Printf("\nCORE %d %c   :  BLOCK  : %f", c, symbol[c%4], float64(berc)/(float64(BLOCKLENGTH)*float64(NOBLOCKS)))
